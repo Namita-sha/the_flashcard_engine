@@ -4,63 +4,41 @@ import { collection, addDoc, serverTimestamp, doc, setDoc } from 'firebase/fires
 import { db } from '../firebase'
 import { useAuth } from '../hooks/useAuth'
 import { extractTextFromPDF } from '../utils/pdfParser'
-import { generateFlashcards }  from '../utils/gemini'
-import { sm2 } from '../utils/sm2'
+import { generateFlashcards } from '../utils/gemini'
 import Navbar from '../components/Navbar'
 
-const STAGES = ['idle', 'extracting', 'generating', 'saving', 'done']
+const DIFF_COLOR = {
+  easy:   'text-green-400 border-green-500/30 bg-green-500/5',
+  medium: 'text-yellow-400 border-yellow-500/30 bg-yellow-500/5',
+  hard:   'text-red-400 border-red-500/30 bg-red-500/5',
+}
 
 export default function Upload() {
-  const { user }         = useAuth()
-  const navigate         = useNavigate()
-  const fileRef          = useRef()
-  const [file,     setFile]     = useState(null)
-  const [deckName, setDeckName] = useState('')
-  const [stage,    setStage]    = useState('idle')
-  const [error,    setError]    = useState(null)
-  const [cardCount, setCardCount] = useState(0)
+  const { user }   = useAuth()
+  const navigate   = useNavigate()
+  const fileRef    = useRef()
 
-  async function handleUpload() {
+  const [file,       setFile]       = useState(null)
+  const [deckName,   setDeckName]   = useState('')
+  const [cardCount,  setCardCount]  = useState(20)
+  const [stage,      setStage]      = useState('idle') // idle | extracting | generating | preview | saving | done
+  const [error,      setError]      = useState(null)
+  const [preview,    setPreview]    = useState([])     // generated cards pending approval
+  const [dismissed,  setDismissed]  = useState(new Set()) // indices of cards user removed
+
+  async function handleGenerate() {
     if (!file || !deckName.trim()) return
     setError(null)
-
     try {
-      // Step 1: extract text
       setStage('extracting')
       const text = await extractTextFromPDF(file)
 
-      // Step 2: generate flashcards
       setStage('generating')
-      const cards = await generateFlashcards(text)
-      setCardCount(cards.length)
+      const cards = await generateFlashcards(text, cardCount)
 
-      // Step 3: save to Firestore
-      setStage('saving')
-      const deckRef = await addDoc(collection(db, 'decks'), {
-        name:      deckName.trim(),
-        userId:    user.uid,
-        createdAt: serverTimestamp(),
-        fileName:  file.name,
-      })
-
-      // Save each card with initial SM-2 values
-      const tomorrow = new Date()
-      tomorrow.setDate(tomorrow.getDate() + 1)
-
-      await Promise.all(cards.map((card, i) => {
-        const cardRef = doc(collection(db, 'decks', deckRef.id, 'cards'))
-        return setDoc(cardRef, {
-          ...card,
-          repetitions: 0,
-          easeFactor:  2.5,
-          interval:    1,
-          dueDate:     tomorrow.toISOString(),
-        })
-      }))
-
-      setStage('done')
-      setTimeout(() => navigate('/dashboard'), 1500)
-
+      setPreview(cards)
+      setDismissed(new Set())
+      setStage('preview')
     } catch (e) {
       console.error(e)
       setError(e.message)
@@ -68,83 +46,197 @@ export default function Upload() {
     }
   }
 
+  async function handleSave() {
+    setStage('saving')
+    try {
+      const finalCards = preview.filter((_, i) => !dismissed.has(i))
+
+      const deckRef = await addDoc(collection(db, 'decks'), {
+        name:      deckName.trim(),
+        userId:    user.uid,
+        createdAt: serverTimestamp(),
+        fileName:  file.name,
+      })
+
+      const now = new Date().toISOString()
+      await Promise.all(finalCards.map((card) => {
+        const cardRef = doc(collection(db, 'decks', deckRef.id, 'cards'))
+        return setDoc(cardRef, {
+          ...card,
+          repetitions: 0,
+          easeFactor:  2.5,
+          interval:    1,
+          dueDate:     now,
+        })
+      }))
+
+      setStage('done')
+      setTimeout(() => navigate('/dashboard'), 1500)
+    } catch (e) {
+      console.error(e)
+      setError(e.message)
+      setStage('preview')
+    }
+  }
+
+  function toggleDismiss(i) {
+    setDismissed(prev => {
+      const next = new Set(prev)
+      next.has(i) ? next.delete(i) : next.add(i)
+      return next
+    })
+  }
+
+  const keptCount = preview.length - dismissed.size
+
+  // ── Preview screen ───────────────────────────────────────────────────────
+  if (stage === 'preview') {
+    return (
+      <div className="min-h-screen bg-dark-900">
+        <Navbar />
+        <main className="max-w-2xl px-6 pb-16 mx-auto pt-28">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-3xl text-white font-display">Review your cards</h2>
+            <span className="text-sm text-dark-400 font-body">{keptCount} cards kept</span>
+          </div>
+          <p className="mb-8 text-sm text-dark-400 font-body">
+            Remove any cards you don't want before saving. Click a card to dismiss it.
+          </p>
+
+          <div className="mb-8 space-y-3">
+            {preview.map((card, i) => (
+              <div
+                key={i}
+                onClick={() => toggleDismiss(i)}
+                className={`p-4 rounded-xl border cursor-pointer transition-all select-none ${
+                  dismissed.has(i)
+                    ? 'opacity-30 border-dark-600 bg-dark-800 line-through'
+                    : 'border-dark-500 bg-dark-700 hover:border-pink-400/30'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className="mb-1 text-sm text-white font-body">{card.question}</p>
+                    <p className="text-xs leading-relaxed text-dark-400 font-body">{card.answer}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded border font-body flex-shrink-0 ${DIFF_COLOR[card.difficulty] || 'text-dark-400 border-dark-500'}`}>
+                    {card.difficulty}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {error && <p className="mb-4 text-sm text-red-400 font-body">{error}</p>}
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => setStage('idle')}
+              className="px-5 py-3 text-sm transition-all border rounded-xl border-dark-500 text-dark-400 font-body hover:border-dark-400"
+            >
+              ← Start over
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={keptCount === 0}
+              className="flex-1 py-3 text-sm font-semibold transition-all bg-pink-300 rounded-2xl text-dark-900 font-body hover:bg-pink-200 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Save {keptCount} cards to deck
+            </button>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  // ── Upload screen ────────────────────────────────────────────────────────
   const stageText = {
     extracting: 'Reading your PDF...',
-    generating: 'Gemini is thinking up your cards...',
-    saving:     'Saving to your account...',
-    done:       `Done! ${cardCount} cards created ✓`,
+    generating: `Generating ${cardCount} flashcards with Gemini...`,
+    saving:     'Saving your deck...',
+    done:       `Deck saved! Redirecting...`,
   }
 
   return (
     <div className="min-h-screen bg-dark-900">
       <Navbar />
-      <main className="max-w-xl mx-auto px-6 pt-28 pb-16">
-        <h2 className="font-display text-3xl text-white mb-2">New deck</h2>
-        <p className="text-dark-400 font-body text-sm mb-10">
+      <main className="max-w-xl px-6 pb-16 mx-auto pt-28">
+        <h2 className="mb-2 text-3xl text-white font-display">New deck</h2>
+        <p className="mb-10 text-sm text-dark-400 font-body">
           Upload a PDF and we'll generate smart flashcards automatically.
         </p>
 
         {/* Deck name */}
         <div className="mb-5">
-          <label className="block text-sm font-body text-dark-400 mb-2">Deck name</label>
+          <label className="block mb-2 text-sm font-body text-dark-400">Deck name</label>
           <input
             type="text"
             value={deckName}
             onChange={e => setDeckName(e.target.value)}
             placeholder="e.g. Organic Chemistry Ch.4"
-            className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-sm font-body text-white placeholder-dark-400 focus:outline-none focus:border-pink-400/50"
+            className="w-full px-4 py-3 text-sm text-white border bg-dark-700 border-dark-500 rounded-xl font-body placeholder-dark-400 focus:outline-none focus:border-pink-400/50"
           />
+        </div>
+
+        {/* Card count slider */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm font-body text-dark-400">Number of flashcards</label>
+            <span className="text-lg text-pink-300 font-display">{cardCount}</span>
+          </div>
+          <input
+            type="range" min={2} max={20} step={5}
+            value={cardCount}
+            onChange={e => setCardCount(Number(e.target.value))}
+            className="w-full cursor-pointer accent-pink-300"
+          />
+          <div className="flex justify-between mt-1 text-xs text-dark-500 font-body">
+            <span>2 — quick review</span>
+            <span>20 — comprehensive</span>
+          </div>
         </div>
 
         {/* File drop zone */}
         <div
           onClick={() => fileRef.current.click()}
-          className="border-2 border-dashed border-dark-500 hover:border-pink-400/40 rounded-2xl p-10 text-center cursor-pointer transition-all mb-6"
+          className="p-10 mb-6 text-center transition-all border-2 border-dashed cursor-pointer border-dark-500 hover:border-pink-400/40 rounded-2xl"
         >
-          <input
-            type="file"
-            accept=".pdf"
-            ref={fileRef}
-            className="hidden"
-            onChange={e => setFile(e.target.files[0])}
-          />
+          <input type="file" accept=".pdf" ref={fileRef} className="hidden"
+            onChange={e => setFile(e.target.files[0])} />
           {file ? (
             <>
-              <p className="text-pink-300 font-body font-semibold">{file.name}</p>
-              <p className="text-dark-400 text-xs font-body mt-1">
+              <p className="font-semibold text-pink-300 font-body">{file.name}</p>
+              <p className="mt-1 text-xs text-dark-400 font-body">
                 {(file.size / 1024 / 1024).toFixed(1)} MB · Click to change
               </p>
             </>
           ) : (
             <>
-              <p className="text-dark-400 font-body mb-1">Drop your PDF here</p>
-              <p className="text-dark-500 text-xs font-body">or click to browse</p>
+              <p className="mb-1 text-dark-400 font-body">Drop your PDF here</p>
+              <p className="text-xs text-dark-500 font-body">or click to browse</p>
             </>
           )}
         </div>
 
-        {/* Status */}
         {stage !== 'idle' && (
-          <div className="mb-6 p-4 rounded-xl bg-dark-700 border border-dark-500">
+          <div className="p-4 mb-6 border rounded-xl bg-dark-700 border-dark-500">
             <div className="flex items-center gap-3">
               {stage !== 'done' && (
-                <div className="w-4 h-4 border-2 border-pink-300 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                <div className="flex-shrink-0 w-4 h-4 border-2 border-pink-300 rounded-full border-t-transparent animate-spin" />
               )}
-              <p className="text-sm font-body text-pink-300">{stageText[stage]}</p>
+              <p className="text-sm text-pink-300 font-body">{stageText[stage]}</p>
             </div>
           </div>
         )}
 
-        {error && (
-          <p className="text-red-400 text-sm font-body mb-4">{error}</p>
-        )}
+        {error && <p className="mb-4 text-sm text-red-400 font-body">{error}</p>}
 
         <button
-          onClick={handleUpload}
-          disabled={!file || !deckName.trim() || stage !== 'idle'}
-          className="w-full py-4 rounded-2xl bg-pink-300 text-dark-900 font-body font-semibold text-base hover:bg-pink-200 active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          onClick={handleGenerate}
+          disabled={!file || !deckName.trim() || (stage !== 'idle' && stage !== 'done')}
+          className="w-full py-4 text-base font-semibold transition-all bg-pink-300 rounded-2xl text-dark-900 font-body hover:bg-pink-200 active:scale-95 disabled:opacity-30 disabled:cursor-not-allowed"
         >
-          Generate flashcards
+          Generate {cardCount} flashcards
         </button>
       </main>
     </div>
