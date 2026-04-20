@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { collection, addDoc, serverTimestamp, doc, setDoc } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../hooks/useAuth'
-import { extractTextFromPDF } from '../utils/pdfParser'
+import { extractTextFromPDF } from '../utils/pdfparser'
 import { generateFlashcards } from '../utils/gemini'
 import Navbar from '../components/Navbar'
 
