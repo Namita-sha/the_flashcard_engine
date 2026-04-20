@@ -3,15 +3,16 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../firebase'
 
 export function useAuth() {
-  const [user,    setUser]    = useState(undefined)
+  const [user, setUser] = useState(null)     // ✅ start with null (NOT undefined)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u)
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u || null)   // ✅ always normalize to null
       setLoading(false)
     })
-    return unsub
+
+    return () => unsubscribe()
   }, [])
 
   return { user, loading }
