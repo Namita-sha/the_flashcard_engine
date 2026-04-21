@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore'
+import { collection, query, where, getDocs, orderBy, addDoc, doc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../hooks/useAuth'
 import { getCardStatus } from '../utils/sm2'
@@ -7,8 +7,86 @@ import Navbar   from '../components/Navbar'
 import DeckCard from '../components/DeckCard'
 import { Link } from 'react-router-dom'
 
+// ── Demo deck — shown to every brand-new user automatically ──────────────────
+// Covers spaced repetition itself, so it's both useful AND a product demo.
+const DEMO_DECK_NAME = '✨ How Memory Works (Demo)'
+
+const DEMO_CARDS = [
+  {
+    question: 'What is spaced repetition?',
+    answer:   'A study technique that schedules reviews at increasing intervals. You see hard cards more often and easy cards less — optimising long-term retention.',
+    topic:    'Memory Science',
+    difficulty: 'easy',
+  },
+  {
+    question: 'What is the "forgetting curve"?',
+    answer:   'Ebbinghaus\'s discovery that memory decays exponentially after learning. Without review, ~50% is forgotten within an hour and ~70% within a day.',
+    topic:    'Memory Science',
+    difficulty: 'medium',
+  },
+  {
+    question: 'What does "active recall" mean and why does it work?',
+    answer:   'Actively retrieving information from memory (rather than re-reading). Each retrieval attempt strengthens the neural pathway, making future recall easier.',
+    topic:    'Study Techniques',
+    difficulty: 'medium',
+  },
+  {
+    question: 'What is the SM-2 algorithm?',
+    answer:   'A spaced repetition algorithm that adjusts review intervals based on how hard you found each card. Rating "Easy" pushes the card further into the future; "Again" resets it.',
+    topic:    'Algorithms',
+    difficulty: 'hard',
+  },
+  {
+    question: 'What is the "testing effect"?',
+    answer:   'The research finding that testing yourself on material produces significantly better long-term retention than re-reading or re-watching the same material.',
+    topic:    'Study Techniques',
+    difficulty: 'easy',
+  },
+  {
+    question: 'How does sleep affect memory consolidation?',
+    answer:   'During sleep — especially deep sleep and REM — the brain replays and consolidates memories from the day, transferring them from short-term to long-term storage.',
+    topic:    'Memory Science',
+    difficulty: 'medium',
+  },
+  {
+    question: 'What is "interleaving" in learning?',
+    answer:   'Mixing different topics or problem types within a study session instead of blocking one topic at a time. Interleaving feels harder but improves long-term retention and transfer.',
+    topic:    'Study Techniques',
+    difficulty: 'hard',
+  },
+  {
+    question: 'What is the difference between recognition and recall?',
+    answer:   'Recognition is identifying a correct answer when shown it (e.g. multiple choice). Recall is retrieving the answer from memory with no prompts. Recall is far more demanding and effective for learning.',
+    topic:    'Memory Science',
+    difficulty: 'medium',
+  },
+]
+
+async function seedDemoDecks(userId) {
+  const now = new Date().toISOString()
+  const deckRef = await addDoc(collection(db, 'decks'), {
+    name:      DEMO_DECK_NAME,
+    userId,
+    createdAt: serverTimestamp(),
+    fileName:  'demo',
+    isDemo:    true,
+  })
+  await Promise.all(
+    DEMO_CARDS.map((card) => {
+      const cardRef = doc(collection(db, 'decks', deckRef.id, 'cards'))
+      return setDoc(cardRef, {
+        ...card,
+        repetitions: 0,
+        easeFactor:  2.5,
+        interval:    1,
+        dueDate:     now,
+      })
+    })
+  )
+}
+
+// ── Streak helpers ────────────────────────────────────────────────────────────
 function getStreak(sessions) {
-  // sessions: array of Date objects (one per study day)
   if (!sessions.length) return 0
   const days = [...new Set(sessions.map(d => d.toDateString()))]
     .map(d => new Date(d))
@@ -17,7 +95,6 @@ function getStreak(sessions) {
   const today     = new Date()
   const yesterday = new Date(); yesterday.setDate(today.getDate() - 1)
 
-  // streak must include today or yesterday to be active
   if (days[0].toDateString() !== today.toDateString() &&
       days[0].toDateString() !== yesterday.toDateString()) return 0
 
@@ -30,13 +107,42 @@ function getStreak(sessions) {
   return streak
 }
 
+const STREAK_MESSAGES = [
+  { min: 1,  msg: 'Good start! Keep it up.' },
+  { min: 3,  msg: 'You\'re building a habit! 🔥' },
+  { min: 7,  msg: 'One week strong! You\'re unstoppable.' },
+  { min: 14, msg: 'Two weeks! Your memory is thanking you.' },
+  { min: 30, msg: 'A whole month! You\'re a legend. 🏆' },
+]
+
+function getStreakMessage(streak) {
+  if (streak === 0) return null
+  const match = [...STREAK_MESSAGES].reverse().find(s => streak >= s.min)
+  return match?.msg || null
+}
+
+// ── Time-of-day empty state ───────────────────────────────────────────────────
+function getTimeOfDayMessage() {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) {
+    return { emoji: '🧠', heading: 'Good morning!',          body: 'Your brain retains 40% more before noon. Best time to start a deck.' }
+  }
+  if (hour >= 12 && hour < 17) {
+    return { emoji: '☀️', heading: 'Afternoon focus mode.',  body: 'Midday review locks in morning learning. Even one deck counts.' }
+  }
+  if (hour >= 17 && hour < 21) {
+    return { emoji: '🌙', heading: 'Perfect time to review.', body: 'Sleep locks in memory. Study now and wake up knowing more.' }
+  }
+  return   { emoji: '🌌', heading: 'Late night learner.',    body: 'Sleep consolidates everything you review tonight. Make it count.' }
+}
+
 export default function Dashboard() {
-  const { user }          = useAuth()
-  const [decks,    setDecks]   = useState([])
-  const [streak,   setStreak]  = useState(0)
+  const { user }           = useAuth()
+  const [decks,    setDecks]    = useState([])
+  const [streak,   setStreak]   = useState(0)
   const [totalDue, setTotalDue] = useState(0)
-  const [loading,  setLoading] = useState(true)
-  const [search,   setSearch]  = useState('')
+  const [loading,  setLoading]  = useState(true)
+  const [search,   setSearch]   = useState('')
 
   useEffect(() => { if (user) loadDecks() }, [user])
 
@@ -49,7 +155,15 @@ export default function Dashboard() {
     )
     const snap = await getDocs(q)
 
-    // Load cards + sessions for each deck in parallel
+    // ── Seed demo deck for brand-new users ──────────────────────────────
+    // Only seed if the user has zero decks at all
+    if (snap.empty) {
+      await seedDemoDecks(user.uid)
+      // Reload after seeding
+      loadDecks()
+      return
+    }
+
     const deckList = await Promise.all(snap.docs.map(async (d) => {
       const data = d.data()
       const [cardsSnap, sessionsSnap] = await Promise.all([
@@ -68,7 +182,6 @@ export default function Dashboard() {
       }
     }))
 
-    // Compute global streak across all decks
     const allSessionDates = deckList.flatMap(d => d.sessions)
     setStreak(getStreak(allSessionDates))
     setTotalDue(deckList.reduce((a, d) => a + d.dueCards, 0))
@@ -80,29 +193,31 @@ export default function Dashboard() {
     d.name.toLowerCase().includes(search.toLowerCase())
   )
 
+  const streakMsg = getStreakMessage(streak)
+  const timeMsg   = getTimeOfDayMessage()
+
   return (
     <div className="min-h-screen bg-dark-900">
       <Navbar />
-      <main className="max-w-5xl mx-auto px-6 pt-28 pb-16">
+      <main className="max-w-5xl px-6 pb-16 mx-auto pt-28">
 
         {/* Header row */}
         <div className="flex items-start justify-between mb-8">
           <div>
-            <h2 className="font-display text-3xl text-white">Your decks</h2>
-            <p className="text-dark-400 font-body text-sm mt-1">
+            <h2 className="text-3xl text-white font-display">Your decks</h2>
+            <p className="mt-1 text-sm text-dark-400 font-body">
               {decks.length} deck{decks.length !== 1 ? 's' : ''}
-              {totalDue > 0 && <span className="text-yellow-400 ml-2">· {totalDue} due today</span>}
+              {totalDue > 0 && <span className="ml-2 text-yellow-400">· {totalDue} due today</span>}
             </p>
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Streak badge */}
             {streak > 0 && (
-              <div className="flex items-center gap-2 px-4 py-2 bg-dark-700 border border-dark-500 rounded-xl">
-                <span className="text-orange-400 text-base">🔥</span>
+              <div className="flex items-center gap-2 px-4 py-2 border bg-dark-700 border-dark-500 rounded-xl">
+                <span className="text-base text-orange-400">🔥</span>
                 <div>
-                  <p className="text-white font-display text-lg leading-none">{streak}</p>
-                  <p className="text-dark-400 text-xs font-body">day streak</p>
+                  <p className="text-lg leading-none text-white font-display">{streak}</p>
+                  <p className="text-xs text-dark-400 font-body">day streak</p>
                 </div>
               </div>
             )}
@@ -114,6 +229,13 @@ export default function Dashboard() {
             </Link>
           </div>
         </div>
+
+        {/* Streak encouragement */}
+        {streakMsg && (
+          <div className="px-4 py-3 mb-6 border bg-orange-500/10 border-orange-500/20 rounded-xl">
+            <p className="text-sm text-orange-300 font-body">{streakMsg}</p>
+          </div>
+        )}
 
         {/* Search */}
         {decks.length > 0 && (
@@ -128,32 +250,28 @@ export default function Dashboard() {
 
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="w-8 h-8 border-2 border-pink-300 border-t-transparent rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-pink-300 rounded-full border-t-transparent animate-spin" />
           </div>
         ) : filtered.length === 0 && decks.length === 0 ? (
-          // Empty state — first-time user
-          <div className="text-center py-20 max-w-sm mx-auto">
-            <div className="text-5xl mb-6">📚</div>
-            <p className="font-display text-2xl text-white mb-3">No decks yet</p>
-            <p className="text-dark-400 font-body text-sm mb-2">
-              Drop in any PDF — a textbook chapter, lecture notes, a research paper —
-              and Recallify turns it into a smart flashcard deck in seconds.
-            </p>
-            <p className="text-dark-400 font-body text-sm mb-8">
-              The SM-2 spaced repetition algorithm then makes sure you review cards
-              at exactly the right moment to lock them into long-term memory.
+          // This state is only reached if seeding somehow failed
+          <div className="max-w-sm py-20 mx-auto text-center">
+            <div className="mb-4 text-5xl">{timeMsg.emoji}</div>
+            <p className="mb-1 text-2xl text-white font-display">{timeMsg.heading}</p>
+            <p className="mb-3 text-sm italic text-pink-300/80 font-body">{timeMsg.body}</p>
+            <p className="mb-8 text-sm text-dark-400 font-body">
+              Drop in any PDF and Recallify turns it into a smart flashcard deck in seconds.
             </p>
             <Link
               to="/upload"
-              className="inline-block px-8 py-3 rounded-2xl bg-pink-300 text-dark-900 font-body font-semibold text-sm hover:bg-pink-200 active:scale-95 transition-all"
+              className="inline-block px-8 py-3 text-sm font-semibold transition-all bg-pink-300 rounded-2xl text-dark-900 font-body hover:bg-pink-200 active:scale-95"
             >
               Upload your first PDF →
             </Link>
           </div>
         ) : filtered.length === 0 ? (
-          <p className="text-dark-400 font-body text-sm">No decks match "{search}".</p>
+          <p className="text-sm text-dark-400 font-body">No decks match "{search}".</p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map(deck => (
               <DeckCard key={deck.id} deck={deck} onUpdate={loadDecks} />
             ))}

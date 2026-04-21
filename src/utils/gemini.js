@@ -16,7 +16,7 @@ async function callGemini(prompt, retries = 5) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+            generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
           }),
         }
       )
@@ -42,27 +42,37 @@ async function callGemini(prompt, retries = 5) {
   }
 }
 
-// Named export (kept for backward compat)
 export async function generateFlashcards(pdfText, cardCount = 20) {
-  const optimizedText = pdfText.length > 10000 ? pdfText.slice(0, 10000) : pdfText
+  const optimizedText = pdfText.length > 12000 ? pdfText.slice(0, 12000) : pdfText
 
-  const prompt = `
-You are an expert teacher. Create exactly ${cardCount} flashcards from the text below.
+  const prompt = `You are an expert teacher and curriculum designer creating high-quality flashcards.
 
-Rules:
-- Return JSON ONLY — no markdown, no code fences, no explanation
-- Ask active-recall questions
-- Each answer: 2–5 sentences
-- difficulty must be one of: easy | medium | hard
+Read the text carefully and create exactly ${cardCount} flashcards that a great teacher would write.
 
-Format:
+Card types to include (mix all of these):
+- Key definitions: "What is X?" with a precise, complete answer
+- Relationships: "How does X relate to Y?" or "What is the difference between X and Y?"
+- Cause and effect: "What happens when X?" or "Why does X cause Y?"
+- Edge cases: "What is the exception to X?" or "When does X NOT apply?"
+- Worked examples: "Give an example of X in practice" or "How would X work in scenario Y?"
+- Conceptual understanding: "Why does X matter?" or "What is the significance of X?"
+
+Quality rules:
+- Every question must require genuine active recall, not just recognition
+- Answers must be complete but concise (2-4 sentences max)
+- Cover the FULL breadth of the text — do not cluster around the opening paragraphs
+- Vary difficulty: roughly 30% easy, 50% medium, 20% hard
+- Topic labels must be specific (e.g. "Mitosis" not "Biology", "French Revolution" not "History")
+- Never write trivial questions like "What is the title?" or "What does the author say?"
+- Do not repeat the same concept in multiple cards
+
+Return JSON ONLY — no markdown, no code fences, no explanation, no preamble:
 [{"question":"","answer":"","topic":"","difficulty":""}]
 
 Text:
-${optimizedText}
-`
+${optimizedText}`
 
-  const res = await callGemini(prompt)
+  const res  = await callGemini(prompt)
   const data = await res.json()
 
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text
@@ -77,5 +87,4 @@ ${optimizedText}
   }
 }
 
-// Default export — fixes the "import generateFlashcards from" crash
 export default generateFlashcards

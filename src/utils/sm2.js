@@ -35,10 +35,11 @@ export function sm2(card, rating) {
 }
 
 export function getCardStatus(card) {
-  if (card.repetitions >= 3 && card.easeFactor >= 2.5) return 'mastered'
-  if (card.easeFactor < 2.0)                            return 'shaky'
+  // Mastered after just 1 good/easy review — shows progress from session 1
+  if (card.repetitions >= 1 && card.easeFactor >= 2.3) return 'mastered'
+  if (card.easeFactor < 1.8)                           return 'shaky'
   const today = new Date()
   today.setHours(23, 59, 59, 999)
-  if (new Date(card.dueDate) <= today)                  return 'due'
+  if (new Date(card.dueDate) <= today)                 return 'due'
   return 'upcoming'
 }
