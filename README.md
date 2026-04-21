@@ -5,7 +5,8 @@ A spaced-repetition flashcard app that turns any PDF into a smart, practice-read
 Built for the Cuemath Round 2 Take-Home Challenge — Problem 1: The Flashcard Engine.
 
 **Live demo [https://recallify.vercel.app](https://the-flashcard-engine-eight.vercel.app/))**
-**github link https://github.com/Namita-sha/the_flashcard_engine
+
+**Github** https://github.com/Namita-sha/the_flashcard_engine
 
 ---
 
