@@ -8,7 +8,6 @@ import DeckCard from '../components/DeckCard'
 import { Link } from 'react-router-dom'
 
 // ── Demo deck — shown to every brand-new user automatically ──────────────────
-// Covers spaced repetition itself, so it's both useful AND a product demo.
 const DEMO_DECK_NAME = '✨ How Memory Works (Demo)'
 
 const DEMO_CARDS = [
@@ -136,6 +135,45 @@ function getTimeOfDayMessage() {
   return   { emoji: '🌌', heading: 'Late night learner.',    body: 'Sleep consolidates everything you review tonight. Make it count.' }
 }
 
+// ── Motivational quotes ───────────────────────────────────────────────────────
+// Picked ONCE when the module loads (i.e. once per login/refresh session).
+// The banner stays on screen the whole time — it never disappears.
+const QUOTES = [
+  { text: 'An investment in knowledge pays the best interest.',                              author: 'Benjamin Franklin' },
+  { text: 'The more that you read, the more things you will know.',                         author: 'Dr. Seuss' },
+  { text: 'Live as if you were to die tomorrow. Learn as if you were to live forever.',     author: 'Mahatma Gandhi' },
+  { text: 'The beautiful thing about learning is that no one can take it away from you.',   author: 'B.B. King' },
+  { text: 'Spaced repetition is the closest thing to a cheat code for your memory.',        author: '' },
+  { text: 'It does not matter how slowly you go as long as you do not stop.',               author: 'Confucius' },
+  { text: 'The expert in anything was once a beginner.',                                    author: 'Helen Hayes' },
+  { text: 'Every master was once a disaster.',                                              author: '' },
+  { text: 'Small daily improvements are the key to staggering long-term results.',          author: '' },
+  { text: 'Knowing is not enough; we must apply. Willing is not enough; we must do.',       author: 'Goethe' },
+  { text: 'Review once, remember twice. Review daily, remember forever.',                   author: '' },
+  { text: 'Your future self is watching you right now through your memories.',              author: '' },
+  { text: 'The secret of getting ahead is getting started.',                                author: 'Mark Twain' },
+  { text: 'You don\'t have to be great to start, but you have to start to be great.',      author: 'Zig Ziglar' },
+  { text: 'One card a day keeps the forgetting curve away.',                                author: '' },
+  { text: 'Learning never exhausts the mind.',                                              author: 'Leonardo da Vinci' },
+  { text: 'Genius is 1% inspiration and 99% perspiration.',                                 author: 'Thomas Edison' },
+  { text: 'What you learn today, you own forever.',                                         author: '' },
+  { text: 'Push yourself, because no one else is going to do it for you.',                  author: '' },
+  { text: 'Education is the passport to the future.',                                       author: 'Malcolm X' },
+]
+
+// Banner colour variants — one is chosen alongside the quote
+const QUOTE_PALETTES = [
+  { banner: 'bg-pink-500/10 border-pink-500/20',   text: 'text-pink-200',   dot: 'text-pink-400'   },
+  { banner: 'bg-purple-500/10 border-purple-500/20', text: 'text-purple-200', dot: 'text-purple-400' },
+  { banner: 'bg-sky-500/10 border-sky-500/20',     text: 'text-sky-200',    dot: 'text-sky-400'    },
+  { banner: 'bg-amber-500/10 border-amber-500/20', text: 'text-amber-200',  dot: 'text-amber-400'  },
+  { banner: 'bg-emerald-500/10 border-emerald-500/20', text: 'text-emerald-200', dot: 'text-emerald-400' },
+]
+
+const _qi             = Math.floor(Math.random() * QUOTES.length)
+const SESSION_QUOTE   = QUOTES[_qi]
+const SESSION_PALETTE = QUOTE_PALETTES[_qi % QUOTE_PALETTES.length]
+
 export default function Dashboard() {
   const { user }           = useAuth()
   const [decks,    setDecks]    = useState([])
@@ -155,11 +193,8 @@ export default function Dashboard() {
     )
     const snap = await getDocs(q)
 
-    // ── Seed demo deck for brand-new users ──────────────────────────────
-    // Only seed if the user has zero decks at all
     if (snap.empty) {
       await seedDemoDecks(user.uid)
-      // Reload after seeding
       loadDecks()
       return
     }
@@ -200,6 +235,21 @@ export default function Dashboard() {
     <div className="min-h-screen bg-dark-900">
       <Navbar />
       <main className="max-w-5xl px-6 pb-16 mx-auto pt-28">
+
+        {/* ── Motivational quote — permanent, changes every login/refresh ── */}
+        <div className={`flex items-start gap-3 px-5 py-4 mb-8 border rounded-2xl ${SESSION_PALETTE.banner}`}>
+          <span className={`mt-0.5 text-base select-none ${SESSION_PALETTE.dot}`}>✦</span>
+          <div>
+            <p className={`text-sm leading-relaxed font-body italic ${SESSION_PALETTE.text}`}>
+              "{SESSION_QUOTE.text}"
+            </p>
+            {SESSION_QUOTE.author && (
+              <p className={`mt-1 text-xs opacity-55 font-body not-italic ${SESSION_PALETTE.text}`}>
+                — {SESSION_QUOTE.author}
+              </p>
+            )}
+          </div>
+        </div>
 
         {/* Header row */}
         <div className="flex items-start justify-between mb-8">
@@ -253,7 +303,6 @@ export default function Dashboard() {
             <div className="w-8 h-8 border-2 border-pink-300 rounded-full border-t-transparent animate-spin" />
           </div>
         ) : filtered.length === 0 && decks.length === 0 ? (
-          // This state is only reached if seeding somehow failed
           <div className="max-w-sm py-20 mx-auto text-center">
             <div className="mb-4 text-5xl">{timeMsg.emoji}</div>
             <p className="mb-1 text-2xl text-white font-display">{timeMsg.heading}</p>
